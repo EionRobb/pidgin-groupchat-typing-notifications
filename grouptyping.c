@@ -9,6 +9,8 @@
 #	define N_(a) (a)
 #endif
 
+#define SEND_TYPED_TIMEOUT_SECONDS 5
+
 static void
 update_typing_message(PidginConversation *gtkconv, const char *message)
 {
@@ -118,10 +120,197 @@ grouptyping_chat_buddy_flags_cb(PurpleConversation *conv, const char *name, Purp
 }
 
 
+static time_t
+purple_conv_chat_get_type_again(const PurpleConvChat *chat)
+{
+	g_return_val_if_fail(chat != NULL, 0);
+
+	return GPOINTER_TO_UINT(g_dataset_get_data(chat, "type_again"));
+}
+
+static void
+purple_conv_chat_set_type_again(PurpleConvChat *chat, unsigned int val)
+{
+	g_return_if_fail(chat != NULL);
+
+	if (val == 0) {
+		g_dataset_set_data(chat, "type_again", NULL);
+	} else {
+		g_dataset_set_data(chat, "type_again", GUINT_TO_POINTER(time(NULL) + val));
+	}
+}
+
+static guint
+purple_conv_chat_send_typing(PurpleConvChat *chat, PurpleTypingState typing_state)
+{
+	PurpleConversation *conv = purple_conv_chat_get_conversation(chat);
+	gpointer ret_val;
+	
+	ret_val = purple_signal_emit_return_1(purple_conversations_get_handle(), "chat-conversation-typing", conv, typing_state);
+	
+	return GPOINTER_TO_UINT(ret_val);
+}
+
+static gboolean
+send_typed_cb(gpointer data)
+{
+	PurpleConversation *conv = (PurpleConversation *)data;
+	PurpleConvChat *chat;
+
+	g_return_val_if_fail(conv != NULL, FALSE);
+
+	chat = PURPLE_CONV_CHAT(conv);
+
+	if (chat != NULL) {
+		/* We set this to 1 so that PURPLE_TYPING will be sent
+		 * if the Purple user types anything else.
+		 */
+		purple_conv_chat_set_type_again(PURPLE_CONV_CHAT(conv), 1);
+
+		purple_conv_chat_send_typing(chat, PURPLE_TYPED);
+
+		//purple_debug_misc("grouptyping", "typed...\n");
+	}
+
+	return FALSE;
+}
+
+static void
+purple_conv_chat_stop_send_typed_timeout(PurpleConvChat *chat)
+{
+	guint send_typed_timeout;
+	
+	g_return_if_fail(chat != NULL);
+	
+	send_typed_timeout = GPOINTER_TO_UINT(g_dataset_get_data(chat, "send_typed_timeout"));
+	
+	if (send_typed_timeout == 0)
+		return;
+
+	purple_timeout_remove(send_typed_timeout);
+	g_dataset_set_data(chat, "send_typed_timeout", NULL);
+}
+
+static void
+purple_conv_chat_start_send_typed_timeout(PurpleConvChat *chat)
+{
+	guint send_typed_timeout;
+	
+	g_return_if_fail(chat != NULL);
+
+	send_typed_timeout = purple_timeout_add_seconds(SEND_TYPED_TIMEOUT_SECONDS, send_typed_cb, purple_conv_chat_get_conversation(chat));
+	
+	g_dataset_set_data(chat, "send_typed_timeout", GUINT_TO_POINTER(send_typed_timeout));
+}
+
+static void
+got_typing_keypress(PidginConversation *gtkconv, gboolean first)
+{
+	PurpleConversation *conv = gtkconv->active_conv;
+	PurpleConvChat *chat;
+
+	/*
+	 * We know we got something, so we at least have to make sure we don't
+	 * send PURPLE_TYPED any time soon.
+	 */
+
+	chat = PURPLE_CONV_CHAT(conv);
+
+	purple_conv_chat_stop_send_typed_timeout(chat);
+	purple_conv_chat_start_send_typed_timeout(chat);
+
+	/* Check if we need to send another PURPLE_TYPING message */
+	if (first || (purple_conv_chat_get_type_again(chat) != 0 && time(NULL) > purple_conv_chat_get_type_again(chat)))
+	{
+		unsigned int timeout;
+		timeout = purple_conv_chat_send_typing(chat, PURPLE_TYPING);
+		
+		purple_conv_chat_set_type_again(chat, timeout);
+	}
+}
+
+static void
+insert_text_cb(GtkTextBuffer *textbuffer, GtkTextIter *position, gchar *new_text, gint new_text_length, gpointer user_data)
+{
+	PidginConversation *gtkconv = (PidginConversation *)user_data;
+
+	g_return_if_fail(gtkconv != NULL);
+
+	// TODO should we make a new setting?
+	if (!purple_prefs_get_bool("/purple/conversations/im/send_typing"))
+		return;
+
+	got_typing_keypress(gtkconv, (gtk_text_iter_is_start(position) && gtk_text_iter_is_end(position)));
+}
+
+static void
+delete_text_cb(GtkTextBuffer *textbuffer, GtkTextIter *start_pos,
+			   GtkTextIter *end_pos, gpointer user_data)
+{
+	PidginConversation *gtkconv = (PidginConversation *)user_data;
+	PurpleConversation *conv;
+	PurpleConvChat *chat;
+
+	g_return_if_fail(gtkconv != NULL);
+
+	conv = gtkconv->active_conv;
+
+	if (!purple_prefs_get_bool("/purple/conversations/im/send_typing"))
+		return;
+
+	chat = PURPLE_CONV_CHAT(conv);
+
+	if (gtk_text_iter_is_start(start_pos) && gtk_text_iter_is_end(end_pos)) {
+
+		/* We deleted all the text, so turn off typing. */
+		purple_conv_chat_stop_send_typed_timeout(chat);
+		
+		purple_conv_chat_send_typing(chat, PURPLE_NOT_TYPING);
+	}
+	else {
+		/* We're deleting, but not all of it, so it counts as typing. */
+		got_typing_keypress(gtkconv, FALSE);
+	}
+}
+
+static void
+connect_typing_signals_to_chat(PidginConversation *gtkconv)
+{
+	PurpleConversation *conv = gtkconv->active_conv;
+	gboolean chat = (conv->type == PURPLE_CONV_TYPE_CHAT);
+	
+	if (chat) {
+		g_signal_connect(G_OBJECT(gtkconv->entry_buffer), "insert_text", G_CALLBACK(insert_text_cb), gtkconv);
+		g_signal_connect(G_OBJECT(gtkconv->entry_buffer), "delete_range", G_CALLBACK(delete_text_cb), gtkconv);
+	}
+}
+
+static void
+purple_marshal_UINT__POINTER_UINT(PurpleCallback cb, va_list args, void *data, void **return_val)
+{
+	guint ret_val;
+	void *arg1 = va_arg(args, void *);
+	guint arg2 = va_arg(args, guint);
+
+	ret_val = ((guint (*)(void *, guint, void *))cb)(arg1, arg2, data);
+	
+	if (return_val != NULL)
+		*return_val = GUINT_TO_POINTER(ret_val);
+}
+
 static gboolean
 plugin_load(PurplePlugin *plugin)
 {
 	purple_signal_connect(purple_conversations_get_handle(), "chat-buddy-flags", plugin, PURPLE_CALLBACK(grouptyping_chat_buddy_flags_cb), NULL);
+	
+	purple_signal_connect(pidgin_conversations_get_handle(), "conversation-displayed", plugin, PURPLE_CALLBACK(connect_typing_signals_to_chat), NULL);
+	
+	
+	purple_signal_register(purple_conversations_get_handle(), "chat-conversation-typing",
+						 purple_marshal_UINT__POINTER_UINT, 
+						 purple_value_new(PURPLE_TYPE_UINT), 2,
+						 purple_value_new(PURPLE_TYPE_SUBTYPE, PURPLE_SUBTYPE_CONVERSATION),
+						 purple_value_new(PURPLE_TYPE_UINT));
 	
 	return TRUE;
 }
@@ -130,6 +319,7 @@ static gboolean
 plugin_unload(PurplePlugin *plugin)
 {
 	purple_signals_disconnect_by_handle(plugin);
+	purple_signal_unregister(purple_conversations_get_handle(), "chat-conversation-typing");
 	
 	return TRUE;
 }
@@ -183,7 +373,7 @@ static PurplePluginInfo info =
 	PIDGIN_PLUGIN_TYPE,								/**< ui_requirement	*/
 	0,												/**< flags			*/
 	NULL,											/**< dependencies	*/
-	PURPLE_PRIORITY_DEFAULT,						/**< priority		*/
+	PURPLE_PRIORITY_HIGHEST,						/**< priority		*/
 	"gtk-grouptyping",								/**< id				*/
 	N_("Group Typing Notifications"),								/**< name			*/
 	"",									/**< version		*/
