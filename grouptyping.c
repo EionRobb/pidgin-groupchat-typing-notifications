@@ -285,6 +285,50 @@ connect_typing_signals_to_chat(PidginConversation *gtkconv)
 	}
 }
 
+
+// Jabber prpl hijacking
+
+#define JABBER_PRPL_ID "prpl-jabber"
+
+static gulong jabber_chat_conversation_typing_signal = 0;
+
+static guint
+jabber_conv_send_typing(PurpleConversation *conv, PurpleTypingState state, gpointer userdata)
+{
+	PurpleConnection *pc;
+	PurplePlugin *plugin;
+	PurplePluginProtocolInfo *prpl_info;
+	const gchar *chat_state = "active";
+	gchar *xml;
+	
+	pc = purple_conversation_get_gc(conv);
+
+	if (!PURPLE_CONNECTION_IS_CONNECTED(pc)) {
+		return 0;
+	}
+
+	plugin = purple_connection_get_prpl(pc);
+	if (!purple_strequal(purple_plugin_get_id(plugin), JABBER_PRPL_ID)) {
+		return 0;
+	}
+	
+	prpl_info = PURPLE_PLUGIN_PROTOCOL_INFO(plugin);
+	
+	if(state == PURPLE_TYPING)
+		chat_state = "composing";
+	else if(state == PURPLE_TYPED)
+		chat_state = "paused";
+	
+	//xml as a string, what could go wrong?
+	xml = g_strdup_printf("<message type='groupchat' to='%s'><%s xmlns='http://jabber.org/protocol/chatstates'/></message>", purple_conversation_get_name(conv), chat_state);
+	prpl_info->send_raw(pc, xml, -1);
+	g_free(xml);
+	
+	return 9999;
+}
+
+// Plugin load/unload
+ 
 static void
 purple_marshal_UINT__POINTER_UINT(PurpleCallback cb, va_list args, void *data, void **return_val)
 {
@@ -312,6 +356,8 @@ plugin_load(PurplePlugin *plugin)
 						 purple_value_new(PURPLE_TYPE_SUBTYPE, PURPLE_SUBTYPE_CONVERSATION),
 						 purple_value_new(PURPLE_TYPE_UINT));
 	
+	jabber_chat_conversation_typing_signal = purple_signal_connect(purple_conversations_get_handle(), "chat-conversation-typing", plugin, PURPLE_CALLBACK(jabber_conv_send_typing), NULL);
+	
 	return TRUE;
 }
 
@@ -320,6 +366,8 @@ plugin_unload(PurplePlugin *plugin)
 {
 	purple_signals_disconnect_by_handle(plugin);
 	purple_signal_unregister(purple_conversations_get_handle(), "chat-conversation-typing");
+	
+	//purple_signals_disconnect(jabber_chat_conversation_typing_signal);
 	
 	return TRUE;
 }
