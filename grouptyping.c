@@ -327,6 +327,54 @@ jabber_conv_send_typing(PurpleConversation *conv, PurpleTypingState state, gpoin
 	return 9999;
 }
 
+static gboolean 
+jabber_signal_message_received(PurpleConnection *pc, const char *type, const char *id, const char *from, const char *to, xmlnode *message)
+{
+	if (purple_strequal(type, "groupchat")) {
+		xmlnode *child = message->child;
+		while (child && child->type != XMLNODE_TYPE_TAG) {
+			child = child->next;
+		}
+		
+		if (child) {
+			const char *xmlns = xmlnode_get_namespace(child);
+			
+			if (purple_strequal(xmlns, "http://jabber.org/protocol/chatstates")) {
+				PurpleTypingState state = PURPLE_NOT_TYPING;
+				if (purple_strequal(child->name, "composing")) {
+					state = PURPLE_TYPING;
+				}
+				
+				// Assume that if we've gotten this far, its a valid group JID
+				gchar **from_parts = g_strsplit(from, "/", 2);
+				if (from_parts[0] && from_parts[1]) {
+				
+					PurpleAccount *account = purple_connection_get_account(pc);
+					PurpleConversation *conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT, from_parts[0], account);
+					PurpleConvChat *chat = PURPLE_CONV_CHAT(conv);
+					
+					if (purple_conv_chat_find_user(chat, from_parts[1])) {
+						PurpleConvChatBuddyFlags cbflags;
+						
+						cbflags = purple_conv_chat_user_get_flags(chat, from_parts[1]);
+						
+						if (state == PURPLE_TYPING)
+							cbflags |= PURPLE_CBFLAGS_TYPING;
+						else
+							cbflags &= ~PURPLE_CBFLAGS_TYPING;
+						
+						purple_conv_chat_user_set_flags(chat, from_parts[1], cbflags);
+					}
+				
+				}
+				g_strfreev(from_parts);
+			}
+		}
+	}
+	
+	return FALSE;
+}
+
 // Plugin load/unload
  
 static void
@@ -356,7 +404,10 @@ plugin_load(PurplePlugin *plugin)
 						 purple_value_new(PURPLE_TYPE_SUBTYPE, PURPLE_SUBTYPE_CONVERSATION),
 						 purple_value_new(PURPLE_TYPE_UINT));
 	
+	// Jabber prpl
 	jabber_chat_conversation_typing_signal = purple_signal_connect(purple_conversations_get_handle(), "chat-conversation-typing", plugin, PURPLE_CALLBACK(jabber_conv_send_typing), NULL);
+	
+	purple_signal_connect(purple_find_prpl(JABBER_PRPL_ID), "jabber-receiving-message", plugin, PURPLE_CALLBACK(jabber_signal_message_received), NULL);
 	
 	return TRUE;
 }
@@ -366,8 +417,6 @@ plugin_unload(PurplePlugin *plugin)
 {
 	purple_signals_disconnect_by_handle(plugin);
 	purple_signal_unregister(purple_conversations_get_handle(), "chat-conversation-typing");
-	
-	//purple_signals_disconnect(jabber_chat_conversation_typing_signal);
 	
 	return TRUE;
 }
