@@ -1,0 +1,21 @@
+CC ?= gcc
+PKG_CONFIG ?= pkg-config
+DEST ?= "C:\Program Files (x86)\Pidgin\plugins"
+
+TARGET = grouptyping.dll
+SRC = grouptyping.c
+
+.PHONY:	all install clean
+
+all: $(TARGET)
+
+$(TARGET): $(SRC)
+	../pidgin-2.10.11/../win32-dev/mingw-4.7.2/bin/gcc -shared -o $@ $^ -I../pidgin-2.10.11/libpurple/win32 -I../pidgin-2.10.11/pidgin/win32 -I../pidgin-2.10.11/libpurple -I../pidgin-2.10.11/pidgin -I../pidgin-2.10.11 -I../pidgin-2.10.11/../win32-dev/glib-2.28.8/include -I../pidgin-2.10.11/../win32-dev/gtk_2_0-2.14/include/gtk-2.0 -I../pidgin-2.10.11/../win32-dev/gtk_2_0-2.14/include/cairo -I../pidgin-2.10.11/../win32-dev/gtk_2_0-2.14/include/atk-1.0 -I../pidgin-2.10.11/../win32-dev/gtk_2_0-2.14/lib/gtk-2.0/include -I../pidgin-2.10.11/../win32-dev/gtk_2_0-2.14/include/pango-1.0 -I../pidgin-2.10.11/../win32-dev/glib-2.28.8/include/glib-2.0 -I../pidgin-2.10.11/../win32-dev/glib-2.28.8/lib/glib-2.0/include -Wall -Wextra -Werror -Wno-deprecated-declarations -Wno-unused-parameter -fno-strict-aliasing -Wformat -L../pidgin-2.10.11/libpurple -L../pidgin-2.10.11/pidgin -L../pidgin-2.10.11/../win32-dev/glib-2.28.8/lib -L../pidgin-2.10.11/../win32-dev/gtk_2_0-2.14/lib -lpurple -lpidgin -lintl -lglib-2.0 -lgtk-win32-2.0 -lgobject-2.0 -g -ggdb -static-libgcc -lz -Ipurple2compat
+#	 ../pidgin-2.10.11/../win32-dev/mingw-4.7.2/bin/gcc -O2 -Wall -Waggregate-return -Wcast-align -Wdeclaration-after-statement -Werror-implicit-function-declaration -Wextra -Wno-sign-compare -Wno-unused-parameter -Winit-self -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wundef -Wstack-protector -fwrapv -fno-strict-overflow -Wno-missing-field-initializers -Wformat-security -fstack-protector-all --param ssp-buffer-size=1 -pipe -mms-bitfields -g -DHAVE_CYRUS_SASL -DHAVE_CONFIG_H -DWIN32_LEAN_AND_MEAN -I../../../win32-dev/gtk_2_0-2.14/include -I../../../win32-dev/gtk_2_0-2.14/include/gtk-2.0 -I../../../win32-dev/gtk_2_0-2.14/include/glib-2.0 -I../../../win32-dev/gtk_2_0-2.14/include/pango-1.0 -I../../../win32-dev/gtk_2_0-2.14/include/atk-1.0 -I../../../win32-dev/gtk_2_0-2.14/include/cairo -I../../../win32-dev/gtk_2_0-2.14/lib/glib-2.0/include -I../../../win32-dev/gtk_2_0-2.14/lib/gtk-2.0/include -I../.. -I../../libpurple -I../../libpurple/win32 -I../../pidgin -I../../pidgin/win32 -o grouptyping.dll.o -c grouptyping.c
+
+install: $(TARGET)
+	mkdir -p $(DEST)
+	install -p $(TARGET) $(DEST)
+
+clean:
+	rm -f $(TARGET)
